@@ -1,0 +1,1918 @@
+# ============================================================
+# SpikeStock – GUI + MySQL (perfis, cargos e permissões)
+# Telas: Boas-vindas, Escolha, Login, Cad Func, Cad Cliente,
+#        Dashboard, Meu Perfil, Alterar Senha, Produtos, Gerenciar Estoque, 
+#        EditProductNames, RegistroVendas, RelatorioVendas, Compras
+# ============================================================
+
+import os, re, unicodedata, tkinter as tk
+from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
+import mysql.connector
+from datetime import datetime, timedelta
+import random
+import string
+
+# ------------------ CONFIG BDA ------------------
+DB_HOST = "localhost"
+DB_USER = "root"
+DB_PASS = ""
+
+# Banco com clientes/funcionários (tem tabelas com espaços/acentos)
+DB_MAIN_NAME = "cadastro clientes e funcionarios"
+
+# Banco e tabela de produtos/estoque (de acordo com seus prints)
+DB_PRODUCTS_NAME = "produtos"
+
+PROD_TABLE = "catalogo"   # mude para "produtos" se preferir
+
+# Caminho opcional para logo
+LOGO_PATH = r"C:\Users\Pablo Santos\OneDrive\Documentos\CHALLENGE FINAL EM PYTHON\logospikestockofc.jpg"
+
+def get_conn_main():
+    return mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_MAIN_NAME
+    )
+
+def get_conn_prod():
+    return mysql.connector.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_PRODUCTS_NAME
+    )
+
+# ------------------ CLIENTES --------------------
+def create_cliente(nome, email, tel, senha):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("""INSERT INTO `cadastro clientes`
+        (`nomecompletoCliente`,`emailCliente`,`telefoneCliente`,`senhaCliente`)
+        VALUES (%s,%s,%s,%s)""", (nome, email, tel, senha))
+        c.commit()
+
+def auth_cliente(email, senha):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("SELECT `senhaCliente` FROM `cadastro clientes` WHERE `emailCliente`=%s", (email,))
+        r = x.fetchone()
+        return bool(r and r[0] == senha)
+
+def fetch_cliente(email):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("""SELECT `idCliente`,`nomecompletoCliente`,`emailCliente`,`telefoneCliente`
+                    FROM `cadastro clientes` WHERE `emailCliente`=%s""", (email,))
+        return x.fetchone()
+
+def get_senha_cliente(email):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("SELECT `senhaCliente` FROM `cadastro clientes` WHERE `emailCliente`=%s", (email,))
+        r = x.fetchone()
+        return r[0] if r else None
+
+def update_senha_cliente(email, nova):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("UPDATE `cadastro clientes` SET `senhaCliente`=%s WHERE `emailCliente`=%s", (nova, email))
+        c.commit()
+
+# ------------------ FUNCIONÁRIOS ----------------
+def create_funcionario(nome, email, tel, senha, cargo):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("""INSERT INTO `cadastro funcionários`
+        (`nomecompletoFuncionario`,`emailCorporativo`,`telefoneFuncionario`,
+         `senhaFuncionario`,`cargoFuncao`)
+        VALUES (%s,%s,%s,%s,%s)""", (nome, email, tel, senha, cargo))
+        c.commit()
+
+def auth_funcionario(email, senha):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("SELECT `senhaFuncionario` FROM `cadastro funcionários` WHERE `emailCorporativo`=%s", (email,))
+        r = x.fetchone()
+        return bool(r and r[0] == senha)
+
+def fetch_funcionario(email):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("""SELECT `idFuncionario`,`nomecompletoFuncionario`,`emailCorporativo`,
+                            `telefoneFuncionario`,`cargoFuncao`
+                    FROM `cadastro funcionários` WHERE `emailCorporativo`=%s""", (email,))
+        return x.fetchone()
+
+def get_cargo_funcionario(email):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("SELECT `cargoFuncao` FROM `cadastro funcionários` WHERE `emailCorporativo`=%s", (email,))
+        r = x.fetchone()
+        return r[0] if r else None
+
+def get_senha_funcionario(email):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("SELECT `senhaFuncionário` FROM `cadastro funcionários` WHERE `emailCorporativo`=%s", (email,))
+        r = x.fetchone()
+        return r[0] if r else None
+
+def update_senha_funcionario(email, nova):
+    with get_conn_main() as c:
+        x = c.cursor()
+        x.execute("UPDATE `cadastro funcionários` SET `senhaFuncionário`=%s WHERE `emailCorporativo`=%s", (nova, email))
+        c.commit()
+
+# ------------------ PRODUTOS --------------------
+def ensure_produtos_schema_and_seed():
+    """Cria a tabela de produtos no banco DB_PRODUCTS_NAME se não existir."""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute(f"""CREATE TABLE IF NOT EXISTS `{PROD_TABLE}`(
+            `idProduto` INT(7) AUTO_INCREMENT PRIMARY KEY,
+            `nomeProduto` VARCHAR(80) NOT NULL,
+            `plataforma` VARCHAR(20) NOT NULL,
+            `categoria` VARCHAR(30) NOT NULL,
+            `sku` VARCHAR(30),
+            `preco` DECIMAL(10,2) NOT NULL,
+            `estoqueAtual` INT NOT NULL DEFAULT 0,
+            `ativo` TINYINT(1) NOT NULL DEFAULT 1
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;""")
+        c.commit()
+
+        # Criar tabela de vendas
+        x.execute("""CREATE TABLE IF NOT EXISTS `vendas` (
+            `id_venda` INT PRIMARY KEY AUTO_INCREMENT,
+            `id_produto` INT NOT NULL,
+            `quantidade` INT NOT NULL,
+            `valor_total` DECIMAL(10,2) NOT NULL,
+            `data_venda` DATE NOT NULL,
+            `id_usuario` INT NOT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;""")
+        c.commit()
+
+        # Criar tabelas para compras
+        x.execute("""CREATE TABLE IF NOT EXISTS `carrinho` (
+            `id_item` INT AUTO_INCREMENT PRIMARY KEY,
+            `id_cliente` INT NOT NULL,
+            `id_produto` INT NOT NULL,
+            `quantidade` INT NOT NULL DEFAULT 1,
+            `preco_unitario` DECIMAL(10,2) NOT NULL,
+            `adicionado_em` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;""")
+        c.commit()
+
+        x.execute("""CREATE TABLE IF NOT EXISTS `pedidos` (
+            `id_pedido` INT AUTO_INCREMENT PRIMARY KEY,
+            `id_cliente` INT NOT NULL,
+            `nome_produto` VARCHAR(255),
+            `numero_pedido` VARCHAR(20) UNIQUE NOT NULL,
+            `total_pedido` DECIMAL(10,2) NOT NULL,
+            `status` ENUM('pendente', 'processando', 'enviado', 'entregue', 'cancelado') DEFAULT 'pendente',
+            `data_pedido` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `forma_pagamento` ENUM('cartao_credito', 'cartao_debito', 'pix', 'boleto') NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;""")
+        c.commit()
+
+        x.execute("""CREATE TABLE IF NOT EXISTS `itens_pedido` (
+            `id_item_pedido` INT AUTO_INCREMENT PRIMARY KEY,
+            `id_pedido` INT NOT NULL,
+            `id_produto` INT NOT NULL,
+            `quantidade` INT NOT NULL,
+            `preco_unitario` DECIMAL(10,2) NOT NULL,
+            `subtotal` DECIMAL(10,2) NOT NULL,
+            FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;""")
+        c.commit()
+
+        x.execute("""CREATE TABLE IF NOT EXISTS `historico_pagamentos` (
+            `id_pagamento` INT AUTO_INCREMENT PRIMARY KEY,
+            `id_pedido` INT NOT NULL,
+            `status` ENUM('pendente', 'aprovado', 'recusado', 'estornado') DEFAULT 'pendente',
+            `valor` DECIMAL(10,2) NOT NULL,
+            `data_pagamento` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `codigo_transacao` VARCHAR(100),
+            FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;""")
+        c.commit()
+
+        x.execute(f"SELECT COUNT(*) FROM `{PROD_TABLE}`")
+        qtd = x.fetchone()[0]
+        if qtd:
+            return
+        seed = [
+            ("Spider-Man 2", "PS5", "Jogo Físico", "PS5-SM2", 349.90, 15, 1),
+            ("God of War", "PS4", "Jogo Físico", "PS4-GOW", 199.90, 20, 1),
+            ("Halo Infinite", "Xbox Series", "Jogo Físico", "XBX-HALO", 299.90, 12, 1),
+            ("Forza Horizon 5", "Xbox One", "Jogo Físico", "XBO-FH5", 249.90, 18, 1),
+            ("The Legend of Zelda: Tears of the Kingdom", "Nintendo Switch", "Jogo Físico", "NSW-ZELDA", 329.90, 10, 1),
+            ("Counter-Strike 2", "PC", "Jogo Digital", "PC-CS2", 0.00, 999, 1),
+            ("FIFA 24", "PS5", "Jogo Físico", "PS5-FIFA24", 299.90, 25, 1),
+            ("Call of Duty: Modern Warfare III", "Xbox Series", "Jogo Físico", "XBX-COD", 349.90, 15, 1),
+            ("Mario Kart 8 Deluxe", "Nintendo Switch", "Jogo Físico", "NSW-MK8", 279.90, 22, 1),
+            ("The Last of Us Part I", "PS5", "Jogo Físico", "PS5-TLOU", 249.90, 8, 1),
+        ]
+        x.executemany(f"""INSERT INTO `{PROD_TABLE}`
+        (`nomeProduto`,`plataforma`,`categoria`,`sku`,`preco`,`estoqueAtual`,`ativo`)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)""", seed)
+        c.commit()
+
+def search_produtos(term="", plataforma="Todos"):
+    like = f"%{term}%"
+    with get_conn_prod() as c:
+        x = c.cursor()
+        if plataforma and plataforma != "Todos":
+            x.execute(f"""SELECT `idProduto`,`nomeProduto`,`plataforma`,`categoria`,`sku`,
+                                `preco`,`estoqueAtual`,`ativo`
+                         FROM `{PROD_TABLE}`
+                         WHERE (`nomeProduto` LIKE %s OR `sku` LIKE %s) AND `plataforma`=%s
+                         ORDER BY `nomeProduto` ASC LIMIT 300""", (like, like, plataforma))
+        else:
+            x.execute(f"""SELECT `idProduto`,`nomeProduto`,`plataforma`,`categoria`,`sku`,
+                                `preco`,`estoqueAtual`,`ativo`
+                         FROM `{PROD_TABLE}`
+                         WHERE `nomeProduto` LIKE %s OR `sku` LIKE %s
+                         ORDER BY `nomeProduto` ASC LIMIT 300""", (like, like))
+        return x.fetchall()
+
+def insert_produto(nome, plataforma, categoria, sku, preco, estoque, ativo):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute(f"""INSERT INTO `{PROD_TABLE}`
+        (`nomeProduto`,`plataforma`,`categoria`,`sku`,`preco`,`estoqueAtual`,`ativo`)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+        (nome, plataforma, categoria, sku, preco, estoque, 1 if ativo else 0))
+        c.commit()
+
+def update_produto(pid, nome, plataforma, categoria, sku, preco, estoque, ativo):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute(f"""UPDATE `{PROD_TABLE}` SET
+            `nomeProduto`=%s,`plataforma`=%s,`categoria`=%s,`sku`=%s,
+            `preco`=%s,`estoqueAtual`=%s,`ativo`=%s
+            WHERE `idProduto`=%s""",
+        (nome, plataforma, categoria, sku, preco, estoque, 1 if ativo else 0, pid))
+        c.commit()
+
+def update_produto_nome(pid, novo_nome):
+    """ATUALIZA APENAS O NOME DO PRODUTO NO BANCO DE DADOS"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute(f"UPDATE `{PROD_TABLE}` SET `nomeProduto`=%s WHERE `idProduto`=%s", (novo_nome, pid))
+        c.commit()
+
+def update_produto_estoque(pid, estoque):
+    """ATUALIZA O ESTOQUE NO XAMPP - FUNÇÃO QUE O ESTOQUISTA USA"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute(f"UPDATE `{PROD_TABLE}` SET `estoqueAtual`=%s WHERE `idProduto`=%s", (estoque, pid))
+        c.commit()
+
+def delete_produto(pid):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute(f"DELETE FROM `{PROD_TABLE}` WHERE `idProduto`=%s", (pid,))
+        c.commit()
+
+# ------------------ VENDAS --------------------
+def registrar_venda(id_produto, quantidade, valor_total, id_usuario):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""INSERT INTO vendas 
+                    (id_produto, quantidade, valor_total, data_venda, id_usuario) 
+                    VALUES (%s, %s, %s, CURDATE(), %s)""", 
+                 (id_produto, quantidade, valor_total, id_usuario))
+        c.commit()
+
+def get_vendas_por_periodo(data_inicio, data_fim):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""SELECT v.id_venda, p.nomeProduto, v.quantidade, v.valor_total, v.data_venda
+                    FROM vendas v
+                    JOIN catalogo p ON v.id_produto = p.idProduto
+                    WHERE v.data_venda BETWEEN %s AND %s
+                    ORDER BY v.data_venda DESC""", (data_inicio, data_fim))
+        return x.fetchall()
+
+def get_total_vendas_periodo(data_inicio, data_fim):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""SELECT SUM(valor_total), COUNT(*) 
+                    FROM vendas 
+                    WHERE data_venda BETWEEN %s AND %s""", 
+                 (data_inicio, data_fim))
+        result = x.fetchone()
+        return result if result else (0, 0)
+
+def get_produto_mais_vendido(data_inicio, data_fim):
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""SELECT p.nomeProduto, SUM(v.quantidade) as total_vendido
+                    FROM vendas v
+                    JOIN catalogo p ON v.id_produto = p.idProduto
+                    WHERE v.data_venda BETWEEN %s AND %s
+                    GROUP BY p.nomeProduto
+                    ORDER BY total_vendido DESC
+                    LIMIT 1""", (data_inicio, data_fim))
+        return x.fetchone()
+
+# ------------------ FUNÇÕES PARA COMPRAS --------------------
+def adicionar_ao_carrinho(id_cliente, id_produto, quantidade, preco_unitario):
+    """Adiciona um produto ao carrinho do cliente"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        # Verifica se o produto já está no carrinho
+        x.execute("SELECT id_item, quantidade FROM carrinho WHERE id_cliente = %s AND id_produto = %s", 
+                 (id_cliente, id_produto))
+        item_existente = x.fetchone()
+        
+        if item_existente:
+            # Atualiza a quantidade se o produto já estiver no carrinho
+            nova_quantidade = item_existente[1] + quantidade
+            x.execute("UPDATE carrinho SET quantidade = %s WHERE id_item = %s", 
+                     (nova_quantidade, item_existente[0]))
+        else:
+            # Adiciona novo item ao carrinho
+            x.execute("""INSERT INTO carrinho (id_cliente, id_produto, quantidade, preco_unitario) 
+                        VALUES (%s, %s, %s, %s)""", 
+                     (id_cliente, id_produto, quantidade, preco_unitario))
+        c.commit()
+
+def obter_carrinho(id_cliente):
+    """Obtém todos os itens do carrinho do cliente"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""SELECT c.id_item, c.id_produto, p.nomeProduto, c.quantidade, c.preco_unitario, 
+                            (c.quantidade * c.preco_unitario) as subtotal
+                    FROM carrinho c
+                    JOIN catalogo p ON c.id_produto = p.idProduto
+                    WHERE c.id_cliente = %s
+                    ORDER BY c.adicionado_em DESC""", (id_cliente,))
+        return x.fetchall()
+
+def atualizar_quantidade_carrinho(id_item, nova_quantidade):
+    """Atualiza a quantidade de um item no carrinho"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        if nova_quantidade <= 0:
+            x.execute("DELETE FROM carrinho WHERE id_item = %s", (id_item,))
+        else:
+            x.execute("UPDATE carrinho SET quantidade = %s WHERE id_item = %s", 
+                     (nova_quantidade, id_item))
+        c.commit()
+
+def remover_do_carrinho(id_item):
+    """Remove um item do carrinho"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("DELETE FROM carrinho WHERE id_item = %s", (id_item,))
+        c.commit()
+
+def limpar_carrinho(id_cliente):
+    """Limpa todo o carrinho do cliente"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("DELETE FROM carrinho WHERE id_cliente = %s", (id_cliente,))
+        c.commit()
+
+def gerar_numero_pedido():
+    """Gera um número único para o pedido"""
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    random_str = ''.join(random.choices(string.digits, k=4))
+    return f"PD{timestamp}{random_str}"
+
+def finalizar_pedido(id_cliente, total_pedido, forma_pagamento):
+    """Finaliza o pedido e cria os registros necessários"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        
+        # Gera número único do pedido
+        numero_pedido = gerar_numero_pedido()
+        
+        # Cria o pedido
+        x.execute("""INSERT INTO pedidos (id_cliente, numero_pedido, total_pedido, forma_pagamento) 
+                    VALUES (%s, %s, %s, %s)""", 
+                 (id_cliente, numero_pedido, total_pedido, forma_pagamento))
+        id_pedido = x.lastrowid
+        
+        # Move itens do carrinho para itens_pedido
+        itens_carrinho = obter_carrinho(id_cliente)
+        for item in itens_carrinho:
+            id_produto = item[1]
+            quantidade = item[3]
+            preco_unitario = item[4]
+            subtotal = item[5]
+            
+            x.execute("""INSERT INTO itens_pedido (id_pedido, id_produto, quantidade, preco_unitario, subtotal) 
+                        VALUES (%s, %s, %s, %s, %s)""", 
+                     (id_pedido, id_produto, quantidade, preco_unitario, subtotal))
+            
+            # Atualiza o estoque
+            x.execute("UPDATE catalogo SET estoqueAtual = estoqueAtual - %s WHERE idProduto = %s", 
+                     (quantidade, id_produto))
+        
+        # Cria registro de pagamento
+        x.execute("""INSERT INTO historico_pagamentos (id_pedido, valor, status) 
+                    VALUES (%s, %s, 'pendente')""", 
+                 (id_pedido, total_pedido))
+        
+        # Limpa o carrinho
+        limpar_carrinho(id_cliente)
+        
+        c.commit()
+        return numero_pedido, id_pedido
+
+def obter_pedidos_cliente(id_cliente):
+    """Obtém o histórico de pedidos do cliente"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""SELECT id_pedido, numero_pedido, total_pedido, status, data_pedido, forma_pagamento
+                    FROM pedidos 
+                    WHERE id_cliente = %s 
+                    ORDER BY data_pedido DESC""", (id_cliente,))
+        return x.fetchall()
+
+def obter_detalhes_pedido(id_pedido):
+    """Obtém os detalhes de um pedido específico"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        x.execute("""SELECT ip.id_produto, p.nomeProduto, ip.quantidade, ip.preco_unitario, ip.subtotal
+                    FROM itens_pedido ip
+                    JOIN catalogo p ON ip.id_produto = p.idProduto
+                    WHERE ip.id_pedido = %s""", (id_pedido,))
+        return x.fetchall()
+
+def registrar_compra(id_cliente, id_produto, nome_produto, quantidade, valor_total, forma_pagamento):
+    """Registra uma compra direta do cliente COM NOME DO PRODUTO E FORMA DE PAGAMENTO"""
+    with get_conn_prod() as c:
+        x = c.cursor()
+        
+        # Gera número único do pedido
+        numero_pedido = gerar_numero_pedido()
+        
+        # Cria o pedido COM NOME DO PRODUTO E FORMA DE PAGAMENTO
+        x.execute("""INSERT INTO pedidos (id_cliente, nome_produto, numero_pedido, total_pedido, forma_pagamento) 
+                    VALUES (%s, %s, %s, %s, %s)""", 
+                 (id_cliente, nome_produto, numero_pedido, valor_total, forma_pagamento))
+        id_pedido = x.lastrowid
+        
+        # Obtém o preço unitário do produto
+        x.execute("SELECT preco FROM catalogo WHERE idProduto = %s", (id_produto,))
+        preco_unitario = x.fetchone()[0]
+        
+        # Adiciona o item ao pedido
+        x.execute("""INSERT INTO itens_pedido (id_pedido, id_produto, quantidade, preco_unitario, subtotal) 
+                    VALUES (%s, %s, %s, %s, %s)""", 
+                 (id_pedido, id_produto, quantidade, preco_unitario, valor_total))
+        
+        # Atualiza o estoque
+        x.execute("UPDATE catalogo SET estoqueAtual = estoqueAtual - %s WHERE idProduto = %s", 
+                 (quantidade, id_produto))
+        
+        # Cria registro de pagamento
+        x.execute("""INSERT INTO historico_pagamentos (id_pedido, valor, status) 
+                    VALUES (%s, %s, 'aprovado')""", 
+                 (id_pedido, valor_total))
+        
+        c.commit()
+        return numero_pedido
+
+# ------------------ PERMISSÕES CORRIGIDAS ------------------
+CLIENTE_PERMS = {"produtos.ver", "compras.realizar"}  # Clientes veem produtos e compram (metas removidas)
+
+CARGO_PERMS = {
+    "Administrador": {
+        "produtos.ver", "produtos.add", "produtos.editar", "produtos.excluir", 
+        "estoque.editar", "vendas.registrar", "vendas.relatorios"
+    },
+    "Gerente de Vendas": {
+        "produtos.ver", "produtos.add", "produtos.editar", "estoque.editar", 
+        "vendas.registrar", "vendas.relatorios"
+    },
+    "Estoquista": {
+        "produtos.ver", "estoque.editar"  # Só estoque, não vendas
+    },
+    "Vendedor": {
+        "produtos.ver", "vendas.registrar"  # Só registrar vendas
+    },
+    "Atendente": {
+        "produtos.ver"  # Só visualizar
+    },
+}
+
+def _strip_accents(s: str) -> str:
+    return ''.join(ch for ch in unicodedata.normalize('NFKD', s) if not unicodedata.combining(ch))
+
+def _cargo_canon(cargo: str) -> str:
+    if not cargo:
+        return ""
+    base = _strip_accents(cargo).strip().lower()
+    base = " ".join(base.split())
+    mapa = {
+        "administrador": "Administrador",
+        "gerente de vendas": "Gerente de Vendas",
+        "estoquista": "Estoquista",
+        "vendedor": "Vendedor",
+        "atendente": "Atendente",
+    }
+    return mapa.get(base, cargo.strip())
+
+# ------------------ UI utils --------------------
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+ASSETS = os.path.dirname(os.path.abspath(__file__))
+
+def load_img(path, max_w=700, max_h=200):
+    p = path if os.path.isabs(path) else os.path.join(ASSETS, path)
+    if not os.path.exists(p): return None
+    try:
+        im = Image.open(p); im.thumbnail((max_w, max_h)); return ImageTk.PhotoImage(im)
+    except: return None
+
+def logo(parent, bg):
+    if os.path.exists(LOGO_PATH):
+        img = load_img(LOGO_PATH)
+        if img:
+            lbl = tk.Label(parent, image=img, bg=bg); lbl.image = img; lbl.pack(pady=6); return
+    tk.Label(parent, text="SpikeStock", bg=bg, fg="#cfe3ff", font=("Segoe UI", 16, "bold")).pack(pady=6)
+
+def validar_campos(d):
+    for k, v in d.items():
+        if not v.get().strip(): return f"Preencha o campo: {k}"
+    if "Email" in d and not EMAIL_RE.match(d["Email"].get().strip()): return "E-mail inválido."
+    if "Telefone" in d and not d["Telefone"].get().isdigit(): return "Telefone deve conter apenas números."
+    if "Senha" in d and "Confirmar senha" in d and d["Senha"].get()!=d["Confirmar senha"].get(): return "As senhas não coincidem."
+    return None
+
+def parse_preco(t):
+    if t is None: return None
+    try: return round(float(t.strip().replace("R$","").replace(".","").replace(",", ".")), 2)
+    except: return None
+
+def parse_int(t):
+    try: return int(t.strip())
+    except: return None
+
+# ------------------ APP -------------------------
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("SpikeStock"); self.geometry("980x640"); self.resizable(False, False); self.configure(bg="#10131a")
+        self.perfil=None; self.current_email=None; self.current_role=None; self.current_cargo=None
+        self.current_user_id = None  # Adicionado para controle de ID do usuário
+        try: ensure_produtos_schema_and_seed()
+        except mysql.connector.Error as e: messagebox.showerror("Banco de Dados", f"Erro ao preparar produtos: {e}")
+
+        cont = tk.Frame(self, bg="#10131a"); cont.pack(fill="both", expand=True)
+        self.frames={}
+        for F in (Welcome,ChooseProfile,Login,RegEmployee,RegClient,Dashboard,Profile,ChangePassword,Products,StockManager,EditProductNames,RegistroVendas,RelatorioVendas,Compras):  # Metas removida
+            f=F(cont,self); self.frames[F.__name__]=f; f.grid(row=0,column=0,sticky="nsew")
+        self.show("Welcome")
+
+    def show(self,name):
+        self.frames[name].tkraise()
+        if hasattr(self.frames[name],"on_show"): self.frames[name].on_show()
+
+    def switch_profile(self):
+        self.perfil=None; self.current_email=None; self.current_role=None; self.current_cargo=None
+        self.current_user_id = None
+        self.show("ChooseProfile")
+
+    def can(self, perm:str)->bool:
+        role = (self.current_role or "").strip().lower()
+        if role in ("cliente/usuário","cliente/usuario"):
+            return perm in CLIENTE_PERMS
+        if role in ("funcionário","funcionario"):
+            cargo = _cargo_canon(self.current_cargo or "")
+            return perm in CARGO_PERMS.get(cargo, set())
+        return False
+
+# ---- Telas básicas
+class Welcome(tk.Frame):
+    def __init__(self,parent,app):
+        super().__init__(parent,bg="#10131a"); logo(self,"#10131a")
+        tk.Label(self,text="SpikeStock",font=("Segoe UI",42,"bold"),bg="#10131a",fg="#e6ffdf").pack(pady=(10,0))
+        tk.Label(self,text="Plante suas vendas. Detone seus lucros.",font=("Segoe UI",14,"italic"),bg="#10131a",fg="#cbeac6").pack(pady=(0,10))
+        im=load_img("welcome_image.jpg")
+        if im: tk.Label(self,image=im,bg="#10131a").pack(pady=6); self._i=im
+        ttk.Button(self,text="Avançar",command=lambda:app.show("ChooseProfile")).pack(pady=8)
+
+class ChooseProfile(tk.Frame):
+    def __init__(self,parent,app):
+        super().__init__(parent,bg="#10131a"); self.app=app
+        logo(self, "#10131a")  # LOGO ADICIONADA AQUI
+        tk.Label(self,text="Escolha seu perfil",font=("Segoe UI",24),bg="#10131a",fg="#fff").pack(pady=6)
+        b=tk.Frame(self,bg="#10131a"); b.pack(pady=8)
+        ttk.Button(b,text="Sou Funcionário",width=20,command=lambda:self._set("func")).grid(row=0,column=0,padx=6,pady=6)
+        ttk.Button(b,text="Sou Cliente/Usuário",width=20,command=lambda:self._set("cli")).grid(row=0,column=1,padx=6,pady=6)
+        ttk.Button(self,text="Voltar",command=lambda:app.show("Welcome")).pack(pady=6)
+    def _set(self,who): self.app.perfil=who; self.app.show("Login")
+
+class Login(tk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+        logo(self, "#10131a")
+        self.title = tk.Label(self, text="", font=("Segoe UI", 28), bg="#10131a", fg="#fff")
+        self.title.pack(pady=(10, 8))
+        im = load_img("login_image.jpg")
+        if im: tk.Label(self, image=im, bg="#10131a").pack(); self._i = im
+        f = tk.Frame(self, bg="#10131a"); f.pack(pady=10)
+        tk.Label(f, text="Email:", bg="#10131a", fg="#dbe6ea").grid(row=0, column=0, sticky="w", pady=4)
+        tk.Label(f, text="Senha:", bg="#10131a", fg="#dbe6ea").grid(row=1, column=0, sticky="w", pady=4)
+        self.v_email, self.v_senha = tk.StringVar(), tk.StringVar()
+        self.show = tk.BooleanVar(value=False)
+        self.e1 = tk.Entry(f, textvariable=self.v_email, width=36)
+        self.e1.grid(row=0, column=1, pady=4)
+        self.e2 = tk.Entry(f, textvariable=self.v_senha, show="*", width=36)
+        self.e2.grid(row=1, column=1, pady=4)
+        tk.Checkbutton(f, text="Exibir senha", bg="#10131a", fg="#ff0000", variable=self.show,
+                       command=lambda: self.e2.config(show="" if self.show.get() else "*")).grid(row=2, column=1, sticky="w")
+        b = tk.Frame(self, bg="#10131a"); b.pack(pady=8)
+        ttk.Button(b, text="Entrar", command=self.logar).grid(row=0, column=0, padx=6)
+        ttk.Button(b, text="Cadastrar-se", command=self.cadastrar).grid(row=0, column=1, padx=6)
+        ttk.Button(self, text="Trocar perfil", command=lambda: app.show("ChooseProfile")).pack()
+        self.bind_all("<Return>", lambda e: self.logar())
+
+    def tkraise(self, *a, **k):
+        super().tkraise(*a, **k)
+        self.title.config(text="Tela Login Funcionário" if self.app.perfil == "func" else "Tela Login Cliente/Usuário")
+        self.e1.focus_set()
+
+    def logar(self):
+        email = self.v_email.get().strip()
+        senha = self.v_senha.get()
+        if not email or not senha:
+            return messagebox.showwarning("Aviso", "Preencha todos os campos!")
+        if not EMAIL_RE.match(email):
+            return messagebox.showwarning("Aviso", "E-mail inválido.")
+        
+        # Verificar se cliente está tentando usar email de funcionário
+        if self.app.perfil == "cli" and email.endswith("@spike.com"):
+            return messagebox.showwarning("Acesso Negado", "Apenas funcionários cadastrados podem logar usando e-mail @spike.com")
+            
+        try:
+            if self.app.perfil == "func":
+                ok = auth_funcionario(email, senha)
+                if ok:
+                    self.app.current_email = email
+                    self.app.current_role = "Funcionário"
+                    self.app.current_cargo = get_cargo_funcionario(email)
+                    # Obter ID do funcionário
+                    func_data = fetch_funcionario(email)
+                    if func_data:
+                        self.app.current_user_id = func_data[0]
+                    messagebox.showinfo("Login efetuado",
+                                        f"Acesso concedido como FUNCIONÁRIO.\nE-mail: {email}\nCargo/Função: {self.app.current_cargo}")
+                    self.app.show("Dashboard")
+                else:
+                    messagebox.showerror("Login", "E-mail ou senha incorretos.")
+            else:
+                ok = auth_cliente(email, senha)
+                if ok:
+                    self.app.current_email = email
+                    self.app.current_role = "Cliente/Usuário"
+                    self.app.current_cargo = None
+                    # Obter ID do cliente
+                    cliente_data = fetch_cliente(email)
+                    if cliente_data:
+                        self.app.current_user_id = cliente_data[0]
+                    messagebox.showinfo("Login efetuado", f"Acesso concedido como CLIENTE/USUÁRIO.\nE-mail: {email}")
+                    self.app.show("Dashboard")
+                else:
+                    messagebox.showerror("Login", "E-mail ou senha incorretos.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+    def cadastrar(self):
+        self.app.show("RegEmployee" if self.app.perfil == "func" else "RegClient")
+
+class RegEmployee(tk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+        logo(self, "#10131a")
+        tk.Label(self, text="Tela Cadastro Funcionário", font=("Segoe UI", 22, "bold"), bg="#10131a", fg="#fff").pack(pady=10)
+        im = load_img("employee_image.jpg")
+        if im: tk.Label(self, image=im, bg="#10131a").pack(); self._i = im
+
+        f = tk.Frame(self, bg="#10131a"); f.pack(pady=10)
+        self.v = {k: tk.StringVar() for k in ("Nome completo", "Email", "Cargo/Função", "Telefone", "Senha", "Confirmar senha")}
+        self.e_pwd = None; self.e_pwd2 = None
+
+        campos = [("Nome completo", 0), ("Email", 1), ("Cargo/Função", 2), ("Telefone", 3), ("Senha", 4), ("Confirmar senha", 5)]
+        for nome, i in campos:
+            tk.Label(f, text=nome + ":", bg="#10131a", fg="#dfe6eb").grid(row=i, column=0, sticky="w", pady=4)
+            if nome == "Cargo/Função":
+                ttk.Combobox(f, textvariable=self.v[nome],
+                              values=["Administrador", "Vendedor", "Estoquista", "Atendente", "Gerente de Vendas"],
+                              state="readonly", width=33).grid(row=i, column=1, pady=4)
+            else:
+                e = tk.Entry(f, textvariable=self.v[nome], width=35, show="*" if "Senha" in nome else "")
+                e.grid(row=i, column=1, pady=4)
+                if nome == "Senha": self.e_pwd = e
+                elif nome == "Confirmar senha": self.e_pwd2 = e
+
+        self.show = tk.BooleanVar(value=False)
+        tk.Checkbutton(f, text="Exibir senha", bg="#10131a", fg="#ff0000", variable=self.show,
+                       command=lambda: self._toggle()).grid(row=6, column=1, sticky="w", pady=4)
+
+        b = tk.Frame(self, bg="#10131a"); b.pack(pady=10)
+        ttk.Button(b, text="Já possuo login", width=18, command=lambda: app.show("Login")).grid(row=0, column=0, padx=6, pady=4)
+        ttk.Button(b, text="Cadastrar", width=18, command=self.save).grid(row=0, column=1, padx=6, pady=4)
+        ttk.Button(b, text="Voltar", width=18, command=lambda: app.show("ChooseProfile")).grid(row=0, column=2, padx=6, pady=4)
+
+    def _toggle(self):
+        show = "" if self.show.get() else "*"
+        if self.e_pwd: self.e_pwd.config(show=show)
+        if self.e_pwd2: self.e_pwd2.config(show=show)
+
+    def save(self):
+        err = validar_campos(self.v)
+        if err: return messagebox.showwarning("Aviso", err)
+
+        email = self.v["Email"].get().strip()
+        if not email.endswith("@spike.com"):
+            return messagebox.showwarning("Aviso", "O e-mail do funcionário deve conter '@spike.com'.")
+
+        try:
+            nome = self.v["Nome completo"].get().strip()
+            tel = self.v["Telefone"].get().strip()
+            senha = self.v["Senha"].get()
+            cargo = self.v["Cargo/Função"].get()
+            create_funcionario(nome, email, tel, senha, cargo)
+            messagebox.showinfo("Cadastro concluído",
+                                "Funcionário cadastrado com sucesso!\n\n"
+                                f"Nome: {nome}\nE-mail: {email}\nTelefone: {tel}\nCargo/Função: {cargo}\n\n"
+                                "Agora você pode realizar o login.")
+            self.app.show("Login")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+class RegClient(tk.Frame):
+    def __init__(self,parent,app):
+        super().__init__(parent,bg="#10131a"); self.app=app; logo(self,"#10131a")
+        tk.Label(self,text="Tela Cadastro Cliente/Usuário",font=("Segoe UI",22,"bold"),bg="#10131a",fg="#fff").pack(pady=10)
+        im=load_img("client_image.jpg")
+        if im: tk.Label(self,image=im,bg="#10131a").pack(); self._i=im
+        f=tk.Frame(self,bg="#10131a"); f.pack(pady=10)
+        self.v={k:tk.StringVar() for k in ("Nome completo","Email","Telefone","Senha","Confirmar senha")}
+        self.e_pwd = None; self.e_pwd2 = None
+        
+        campos=[("Nome completo",0),("Email",1),("Telefone",2),("Senha",3),("Confirmar senha",4)]
+        for nome,i in campos:
+            tk.Label(f,text=nome+":",bg="#10131a",fg="#e1e8ed").grid(row=i,column=0,sticky="w",pady=4)
+            e = tk.Entry(f,textvariable=self.v[nome],width=35,show="*" if "Senha" in nome else "")
+            e.grid(row=i,column=1,pady=4)
+            if nome == "Senha": self.e_pwd = e
+            elif nome == "Confirmar senha": self.e_pwd2 = e
+            
+        self.show=tk.BooleanVar(value=False)
+        tk.Checkbutton(f,text="Exibir senha",bg="#10131a",fg="#ff0000",variable=self.show,
+            command=lambda: self._toggle()).grid(row=5,column=1,sticky="w",pady=4)
+        b=tk.Frame(self,bg="#10131a"); b.pack(pady=10)
+        ttk.Button(b,text="Já possuo login",width=18,command=lambda:app.show("Login")).grid(row=0,column=0,padx=6,pady=4)
+        ttk.Button(b,text="Cadastrar",width=18,command=self.save).grid(row=0,column=1,padx=6,pady=4)
+        ttk.Button(b,text="Voltar",width=18,command=lambda:app.show("ChooseProfile")).grid(row=0,column=2,padx=6,pady=4)
+
+    def _toggle(self):
+        show = "" if self.show.get() else "*"
+        if self.e_pwd: self.e_pwd.config(show=show)
+        if self.e_pwd2: self.e_pwd2.config(show=show)
+
+    def save(self):
+        err=validar_campos(self.v)
+        if err: return messagebox.showwarning("Aviso", err)
+        try:
+            nome=self.v["Nome completo"].get().strip()
+            email=self.v["Email"].get().strip()
+            tel=self.v["Telefone"].get().strip()
+            senha=self.v["Senha"].get()
+            create_cliente(nome,email,tel,senha)
+            messagebox.showinfo("Cadastro concluído",
+                "Cliente cadastrado com sucesso!\n\n"
+                f"Nome: {nome}\nE-mail: {email}\nTelefone: {tel}\n\n"
+                "Agora você pode realizar o login.")
+            self.app.show("Login")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+class Dashboard(tk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+        logo(self, "#10131a")
+
+        tk.Label(self, text="Painel SpikeStock", font=("Segoe UI", 26, "bold"), bg="#10131a", fg="#fff").pack(pady=(6, 2))
+        self.subtitle = tk.Label(self, text="", font=("Segoe UI", 12), bg="#10131a", fg="#cfd8dc")
+        self.subtitle.pack(pady=(0, 14))
+
+        # Carregar imagem (se necessário)
+        im = load_img("dashboard_image.jpg", 700, 180)
+        if im: 
+            tk.Label(self, image=im, bg="#10131a").pack() 
+            self._i = im
+
+        # Frame para os botões
+        b = tk.Frame(self, bg="#10131a")
+        b.pack(pady=14)
+
+        # Botões - Linha 1 (Básicos - todos veem)
+        ttk.Button(b, text="Meu Perfil", width=20, command=lambda: app.show("Profile")).grid(row=0, column=0, padx=6, pady=6)
+        ttk.Button(b, text="Alterar Senha", width=20, command=lambda: app.show("ChangePassword")).grid(row=0, column=1, padx=6, pady=6)
+        ttk.Button(b, text="Produtos", width=20, command=lambda: app.show("Products")).grid(row=0, column=2, padx=6, pady=6)
+        ttk.Button(b, text="Trocar perfil", width=20, command=self.app.switch_profile).grid(row=0, column=3, padx=6, pady=6)
+        
+        # Botões - Linha 2 (Funcionários)
+        self.btn_edit_names = ttk.Button(b, text="Editar Nomes", width=20, command=lambda: app.show("EditProductNames"))
+        self.btn_edit_names.grid(row=1, column=0, padx=6, pady=6)
+
+        self.btn_stock = ttk.Button(b, text="Gerenciar Estoque", width=20, command=lambda: app.show("StockManager"))
+        self.btn_stock.grid(row=1, column=1, padx=6, pady=6)
+
+        self.btn_registro_vendas = ttk.Button(b, text="Registrar Vendas", width=20, command=lambda: app.show("RegistroVendas"))
+        self.btn_registro_vendas.grid(row=1, column=2, padx=6, pady=6)
+
+        self.btn_relatorio_vendas = ttk.Button(b, text="Relatório Vendas", width=20, command=lambda: app.show("RelatorioVendas"))
+        self.btn_relatorio_vendas.grid(row=1, column=3, padx=6, pady=6)
+
+        # Botões - Linha 3 (Compras apenas para clientes)
+        self.btn_compras = ttk.Button(b, text="Loja - Comprar", width=20, command=lambda: app.show("Compras"))
+        self.btn_compras.grid(row=2, column=0, padx=6, pady=6)
+
+    def on_show(self):
+        # Exibe as informações do usuário e cargo
+        cargo = f" ({self.app.current_cargo})" if self.app.current_role == "Funcionário" and self.app.current_cargo else ""
+        self.subtitle.config(text=f"Logado como: {self.app.current_role or '-'} • {self.app.current_email or '-'}{cargo}")
+        
+        role = (self.app.current_role or "").strip().lower()
+
+        # CLIENTES - Só veem botões básicos + compras
+        if role in ("cliente/usuário", "cliente/usuario"):
+            self.btn_stock.grid_remove()
+            self.btn_edit_names.grid_remove()
+            self.btn_registro_vendas.grid_remove()
+            self.btn_relatorio_vendas.grid_remove()
+            self.btn_compras.grid()  # Clientes veem loja
+            return
+
+        # FUNCIONÁRIOS - Botões conforme permissões
+        if role in ("funcionário", "funcionario"):
+            self.btn_stock.grid()
+            self.btn_edit_names.grid()
+            self.btn_registro_vendas.grid()
+            self.btn_relatorio_vendas.grid()
+            self.btn_compras.grid_remove()  # Funcionários NÃO veem loja
+            
+            self.btn_stock.configure(state=("normal" if self.app.can("estoque.editar") else "disabled"))
+            self.btn_edit_names.configure(state=("normal" if self.app.can("produtos.editar") else "disabled"))
+            self.btn_registro_vendas.configure(state=("normal" if self.app.can("vendas.registrar") else "disabled"))
+            self.btn_relatorio_vendas.configure(state=("normal" if self.app.can("vendas.relatorios") else "disabled"))
+        else:
+            # Se não é funcionário nem cliente, esconde tudo
+            self.btn_stock.grid_remove()
+            self.btn_edit_names.grid_remove()
+            self.btn_registro_vendas.grid_remove()
+            self.btn_relatorio_vendas.grid_remove()
+            self.btn_compras.grid_remove()
+
+class Profile(tk.Frame):
+    def __init__(self,parent,app):
+        super().__init__(parent,bg="#10131a"); self.app=app; logo(self,"#10131a")
+        tk.Label(self,text="Meu Perfil",font=("Segoe UI",24,"bold"),bg="#10131a",fg="#fff").pack(pady=(6,2))
+        self.subtitle=tk.Label(self,text="",font=("Segoe UI",12),bg="#10131a",fg="#cfd8dc"); self.subtitle.pack(pady=(0,10))
+        f=tk.Frame(self,bg="#10131a"); f.pack(pady=10)
+        self.v_nome,self.v_email,self.v_tel,self.v_cargo = tk.StringVar(),tk.StringVar(),tk.StringVar(),tk.StringVar()
+        def row(r,txt,var): tk.Label(f,text=txt,bg="#10131a",fg="#fff").grid(row=r,column=0,sticky="w",pady=4,padx=6); tk.Entry(f,textvariable=var,width=40,state="readonly").grid(row=r,column=1,pady=4,padx=6)
+        row(0,"Nome completo:",self.v_nome); row(1,"Email:",self.v_email); row(2,"Telefone:",self.v_tel)
+        self.cargo_row=tk.Frame(self,bg="#10131a")
+        tk.Frame(self,bg="#10131a").pack(pady=12)
+        ttk.Button(self,text="Voltar ao Dashboard",width=22,command=lambda:app.show("Dashboard")).pack()
+
+    def on_show(self):
+        role,email=self.app.current_role,self.app.current_email
+        if not role or not email: messagebox.showinfo("Sessão","Faça login."); return self.app.show("Login")
+        self.subtitle.config(text=f"Perfil: {role} • {email}")
+        for w in self.cargo_row.winfo_children(): w.destroy()
+        try:
+            if role=="Funcionário":
+                row=fetch_funcionario(email) or (None,"","","","")
+                _id,nome,mail,tel,cargo=row
+                self.v_nome.set(nome); self.v_email.set(mail); self.v_tel.set(tel); self.v_cargo.set(cargo or "")
+                self.cargo_row.pack(pady=2)
+                tk.Label(self.cargo_row,text="Cargo/Função:",bg="#10131a",fg="#fff").grid(row=0,column=0,sticky="w",pady=4,padx=6)
+                tk.Entry(self.cargo_row,textvariable=self.v_cargo,width=40,state="readonly").grid(row=0,column=1,pady=4,padx=6)
+            else:
+                row=fetch_cliente(email) or (None,"","","")
+                _id,nome,mail,tel=row
+                self.v_nome.set(nome); self.v_email.set(mail); self.v_tel.set(tel)
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}"); self.app.show("Dashboard")
+
+class ChangePassword(tk.Frame):
+    def __init__(self,parent,app):
+        super().__init__(parent,bg="#10131a"); self.app=app; logo(self,"#10131a")
+        tk.Label(self,text="Alterar Senha",font=("Segoe UI",24,"bold"),bg="#10131a",fg="#fff").pack(pady=(6,2))
+        self.subtitle=tk.Label(self,text="",font=("Segoe UI",12),bg="#10131a",fg="#cfd8dc"); self.subtitle.pack(pady=(0,12))
+        f=tk.Frame(self,bg="#10131a"); f.pack(pady=10)
+        self.v_atual,self.v_nova,self.v_conf = tk.StringVar(),tk.StringVar(),tk.StringVar()
+        e1=tk.Entry(f,textvariable=self.v_atual,show="*",width=32)
+        e2=tk.Entry(f,textvariable=self.v_nova,show="*",width=32)
+        e3=tk.Entry(f,textvariable=self.v_conf,show="*",width=32)
+        tk.Label(f,text="Senha atual:",bg="#10131a",fg="#fff").grid(row=0,column=0,sticky="w",pady=4,padx=6); e1.grid(row=0,column=1,pady=4,padx=6)
+        tk.Label(f,text="Nova senha:",bg="#10131a",fg="#fff").grid(row=1,column=0,sticky="w",pady=4,padx=6); e2.grid(row=1,column=1,pady=4,padx=6)
+        tk.Label(f,text="Confirmar nova senha:",bg="#10131a",fg="#fff").grid(row=2,column=0,sticky="w",pady=4,padx=6); e3.grid(row=2,column=1,pady=4,padx=6)
+        show=tk.BooleanVar(value=False)
+        tk.Checkbutton(f,text="Exibir senha",bg="#10131a",fg="#ff0000",variable=show,
+            command=lambda:[w.config(show="" if show.get() else "*") for w in (e1,e2,e3)]
+        ).grid(row=3,column=1,sticky="w",pady=4)
+        b=tk.Frame(self,bg="#10131a"); b.pack(pady=12)
+        ttk.Button(b,text="Salvar",width=18,command=self._salvar).grid(row=0,column=0,padx=6)
+        ttk.Button(b,text="Voltar",width=18,command=lambda:app.show("Dashboard")).grid(row=0,column=1,padx=6)
+
+    def on_show(self):
+        self.subtitle.config(text=f"Usuário: {self.app.current_role or '-'} • {self.app.current_email or '-'}")
+        self.v_atual.set(""); self.v_nova.set(""); self.v_conf.set("")
+
+    def _salvar(self):
+        email,role=self.app.current_email,self.app.current_role
+        if not email or not role: return messagebox.showwarning("Sessão","Faça login.")
+        a,n,c = self.v_atual.get(), self.v_nova.get(), self.v_conf.get()
+        if not a or not n or not c: return messagebox.showwarning("Aviso","Preencha todos os campos.")
+        if n!=c: return messagebox.showwarning("Aviso","As novas senhas não coincidem.")
+        try:
+            if role=="Funcionário":
+                if get_senha_funcionario(email)!=a: return messagebox.showerror("Erro","Senha atual incorreta.")
+                update_senha_funcionario(email,n)
+            else:
+                if get_senha_cliente(email)!=a: return messagebox.showerror("Erro","Senha atual incorreta.")
+                update_senha_cliente(email,n)
+            messagebox.showinfo("OK","Senha alterada."); self.app.show("Dashboard")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+# ------------------ Produtos (com permissões) ------------------
+class Products(tk.Frame):
+    PLATAFORMAS=["Todos","PC","PS5","PS4","Xbox Series","Xbox One","Nintendo Switch"]
+    CATEGORIAS=["Jogo Físico","Jogo Digital","Acessório"]
+
+    def __init__(self,parent,app):
+        super().__init__(parent,bg="#10131a"); self.app=app
+        logo(self,"#10131a")
+        tk.Label(self,text="Produtos — Catálogo",font=("Segoe UI",24,"bold"),bg="#10131a",fg="#fff").pack(pady=(6,2))
+        self.subtitle=tk.Label(self,text="",font=("Segoe UI",12),bg="#10131a",fg="#cfd8dc"); self.subtitle.pack(pady=(0,4))
+
+        topbar=tk.Frame(self,bg="#10131a"); topbar.pack(fill="x",padx=6,pady=4)
+        ttk.Button(topbar,text="Voltar ao Dashboard",width=20,command=lambda:self.app.show("Dashboard")).pack(side="right")
+
+        top=tk.Frame(self,bg="#10131a"); top.pack(pady=6)
+        tk.Label(top,text="Buscar:",bg="#10131a",fg="#fff").grid(row=0,column=0,padx=4)
+        self.v_term=tk.StringVar(); tk.Entry(top,textvariable=self.v_term,width=30).grid(row=0,column=1,padx=4)
+        tk.Label(top,text="Plataforma:",bg="#10131a",fg="#fff").grid(row=0,column=2,padx=4)
+        self.v_plat=tk.StringVar(value="Todos")
+        ttk.Combobox(top,textvariable=self.v_plat,values=self.PLATAFORMAS,state="readonly",width=18).grid(row=0,column=3,padx=4)
+        ttk.Button(top,text="Pesquisar",command=self._refresh).grid(row=0,column=4,padx=6)
+        ttk.Button(top,text="Limpar",command=lambda:(self.v_term.set(""),self.v_plat.set("Todos"),self._refresh())).grid(row=0,column=5,padx=2)
+
+        cols=("id","nome","plataforma","categoria","sku","preco","estoque","ativo")
+        area=tk.Frame(self,bg="#10131a"); area.pack(padx=10,pady=8,fill="both",expand=True)
+        self.tree=ttk.Treeview(area,columns=cols,show="headings",height=11)
+        vsb=ttk.Scrollbar(area,orient="vertical",command=self.tree.yview)
+        hsb=ttk.Scrollbar(area,orient="horizontal",command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set,xscrollcommand=hsb.set)
+        area.grid_rowconfigure(0,weight=1); area.grid_columnconfigure(0,weight=1)
+        self.tree.grid(row=0,column=0,sticky="nsew"); vsb.grid(row=0,column=1,sticky="ns"); hsb.grid(row=1,column=0,sticky="ew")
+
+        self.tree.heading("id",text="ID"); self.tree.column("id",width=50,anchor="center")
+        self.tree.heading("nome",text="Nome"); self.tree.column("nome",width=260)
+        self.tree.heading("plataforma",text="Plataforma"); self.tree.column("plataforma",width=120,anchor="center")
+        self.tree.heading("categoria",text="Categoria"); self.tree.column("categoria",width=120,anchor="center")
+        self.tree.heading("sku",text="SKU"); self.tree.column("sku",width=100,anchor="center")
+        self.tree.heading("preco",text="Preço (R$)"); self.tree.column("preco",width=100,anchor="e")
+        self.tree.heading("estoque",text="Estoque"); self.tree.column("estoque",width=80,anchor="center")
+        self.tree.heading("ativo",text="Ativo"); self.tree.column("ativo",width=60,anchor="center")
+
+        self.tree.bind("<<TreeviewSelect>>",self._on_select)
+
+        form=tk.Frame(self,bg="#10131a"); form.pack(pady=10)
+        self.v_id,self.v_nome,self.v_sku,self.v_preco,self.v_estoque = tk.StringVar(),tk.StringVar(),tk.StringVar(),tk.StringVar(),tk.StringVar()
+        self.v_plataforma_form=tk.StringVar(value="PC"); self.v_categoria_form=tk.StringVar(value="Jogo Digital"); self.v_ativo=tk.BooleanVar(value=True)
+
+        self.e_id   = tk.Entry(form,textvariable=self.v_id,width=10,state="readonly")
+        self.e_nome = tk.Entry(form,textvariable=self.v_nome,width=40)
+        self.e_sku  = tk.Entry(form,textvariable=self.v_sku,width=20)
+        self.cb_plat= ttk.Combobox(form,textvariable=self.v_plataforma_form,values=self.PLATAFORMAS[1:],state="readonly",width=18)
+        self.cb_cat = ttk.Combobox(form,textvariable=self.v_categoria_form,values=self.CATEGORIAS,state="readonly",width=18)
+        self.e_preco= tk.Entry(form,textvariable=self.v_preco,width=12)
+        self.e_est  = tk.Entry(form,textvariable=self.v_estoque,width=10)
+        self.chk_atv= tk.Checkbutton(form,text="Ativo",bg="#10131a",fg="#fff",selectcolor="#10131a",variable=self.v_ativo)
+
+        def row(lbl,w,r): tk.Label(form,text=lbl,bg="#10131a",fg="#fff").grid(row=r,column=0,sticky="w",padx=6,pady=3); w.grid(row=r,column=1,sticky="w",padx=6,pady=3)
+        row("ID:",self.e_id,0); row("Nome:",self.e_nome,1); row("SKU:",self.e_sku,2)
+        row("Plataforma:",self.cb_plat,3); row("Categoria:",self.cb_cat,4)
+        row("Preço (R$):",self.e_preco,5); row("Estoque:",self.e_est,6); self.chk_atv.grid(row=6,column=1,sticky="e",padx=6)
+
+        btns=tk.Frame(self,bg="#10131a"); btns.pack(pady=8)
+        self.btn_add=ttk.Button(btns,text="Adicionar",width=16,command=self._add)
+        self.btn_upd=ttk.Button(btns,text="Atualizar Selecionado",width=22,command=self._update)
+        self.btn_del=ttk.Button(btns,text="Excluir Selecionado",width=20,command=self._delete)
+        self.btn_upd_stock=ttk.Button(btns,text="Salvar apenas Estoque",width=22,command=self._update_stock_only)
+        self.btn_back=ttk.Button(btns,text="Voltar",width=16,command=lambda:self.app.show("Dashboard"))
+        self.btn_add.grid(row=0,column=0,padx=6,pady=4)
+        self.btn_upd.grid(row=0,column=1,padx=6,pady=4)
+        self.btn_del.grid(row=0,column=2,padx=6,pady=4)
+        self.btn_upd_stock.grid(row=0,column=3,padx=6,pady=4)
+        self.btn_back.grid(row=0,column=4,padx=6,pady=4)
+
+    def _apply_perms(self):
+        # Clientes só podem visualizar
+        if self.app.current_role == "Cliente/Usuário":
+            self.btn_add.configure(state="disabled")
+            self.btn_upd.configure(state="disabled")
+            self.btn_del.configure(state="disabled")
+            self.btn_upd_stock.configure(state="disabled")
+            
+            self.e_nome.configure(state="readonly")
+            self.e_sku.configure(state="readonly")
+            self.e_preco.configure(state="readonly")
+            self.e_est.configure(state="readonly")
+            self.cb_plat.configure(state="disabled")
+            self.cb_cat.configure(state="disabled")
+            self.chk_atv.configure(state="disabled")
+            return
+
+        # Funcionários conforme permissões
+        self.btn_add.configure(state=("normal" if self.app.can("produtos.add") else "disabled"))
+        self.btn_upd.configure(state=("normal" if (self.app.can("produtos.editar") or self.app.can("estoque.editar")) else "disabled"))
+        self.btn_del.configure(state=("normal" if self.app.can("produtos.excluir") else "disabled"))
+        self.btn_upd_stock.configure(state=("normal" if self.app.can("estoque.editar") else "disabled"))
+
+        self.e_id.configure(state="readonly")
+        can_stock = self.app.can("estoque.editar") or self.app.can("produtos.editar")
+        self.e_est.configure(state=("normal" if can_stock else "readonly"))
+
+        can_edit = self.app.can("produtos.editar")
+        self.e_nome.configure(state=("normal" if can_edit else "readonly"))
+        self.e_sku.configure(state=("normal" if can_edit else "readonly"))
+        self.e_preco.configure(state=("normal" if can_edit else "readonly"))
+        self.cb_plat.configure(state=("readonly" if can_edit else "disabled"))
+        self.cb_cat.configure(state=("readonly" if can_edit else "disabled"))
+        self.chk_atv.configure(state=("normal" if can_edit else "disabled"))
+
+    def on_show(self):
+        # Clientes podem ver produtos, funcionários também
+        if not self.app.current_role:
+            messagebox.showwarning("Acesso", "Faça login primeiro.")
+            return self.app.show("Login")
+        
+        self._refresh()
+        who=f"{self.app.current_role or '-'} • {self.app.current_email or '-'}"
+        cargo=f" | Cargo: {self.app.current_cargo}" if self.app.current_role=="Funcionário" and self.app.current_cargo else ""
+        self.subtitle.config(text=f"Usuário: {who}{cargo}")
+        self._apply_perms()
+
+    def _refresh(self):
+        term=self.v_term.get().strip(); plataforma=self.v_plat.get()
+        try:
+            rows=search_produtos(term,plataforma)
+            for i in self.tree.get_children(): self.tree.delete(i)
+            for r in rows:
+                pid,nome,plat,cat,sku,preco,est,ativo=r
+                self.tree.insert("", "end", values=(pid,nome,plat,cat,sku,f"{preco:.2f}",est,"Sim" if ativo else "Não"))
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+    def _on_select(self,_=None):
+        s=self.tree.selection()
+        if not s: return
+        v=self.tree.item(s[0],"values")
+        self.v_id.set(v[0]); self.v_nome.set(v[1]); self.v_plataforma_form.set(v[2]); self.v_categoria_form.set(v[3])
+        self.v_sku.set(v[4]); self.v_preco.set(v[5]); self.v_estoque.set(v[6]); self.v_ativo.set(v[7]=="Sim")
+        self._apply_perms()
+
+    def _add(self):
+        if not self.app.can("produtos.add"):
+            return messagebox.showwarning("Permissão","Você não pode adicionar produtos.")
+        nome=self.v_nome.get().strip(); sku=self.v_sku.get().strip()
+        plat=self.v_plataforma_form.get().strip(); cat=self.v_categoria_form.get().strip()
+        preco=parse_preco(self.v_preco.get()); est=parse_int(self.v_estoque.get())
+        if not nome or not plat or not cat: return messagebox.showwarning("Aviso","Preencha Nome, Plataforma e Categoria.")
+        if preco is None: return messagebox.showwarning("Aviso","Preço inválido. Ex.: 199,90")
+        if est is None or est<0: return messagebox.showwarning("Aviso","Estoque inválido.")
+        try:
+            insert_produto(nome,plat,cat,sku,preco,est,self.v_ativo.get())
+            self._clear(); self._refresh()
+            messagebox.showinfo("OK","Produto adicionado.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+    def _update(self):
+        if not (self.app.can("produtos.editar") or self.app.can("estoque.editar")):
+            return messagebox.showwarning("Permissão","Você não pode atualizar produtos.")
+        if not self.app.can("produtos.editar") and self.app.can("estoque.editar"):
+            return messagebox.showinfo("Permissão","Como Estoquista, use 'Salvar apenas Estoque'.")
+        pid=parse_int(self.v_id.get())
+        if not pid: return messagebox.showwarning("Aviso","Selecione um item na lista.")
+        nome=self.v_nome.get().strip(); sku=self.v_sku.get().strip()
+        plat=self.v_plataforma_form.get().strip(); cat=self.v_categoria_form.get().strip()
+        preco=parse_preco(self.v_preco.get()); est=parse_int(self.v_estoque.get())
+        if not nome or not plat or not cat: return messagebox.showwarning("Aviso","Preencha Nome, Plataforma e Categoria.")
+        if preco is None: return messagebox.showwarning("Aviso","Preço inválido.")
+        if est is None or est<0: return messagebox.showwarning("Aviso","Estoque inválido.")
+        try:
+            update_produto(pid,nome,plat,cat,sku,preco,est,self.v_ativo.get()); self._refresh()
+            messagebox.showinfo("OK","Produto atualizado.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+    def _update_stock_only(self):
+        if not self.app.can("estoque.editar"):
+            return messagebox.showwarning("Permissão","Apenas Estoquista (ou cargos com edição de estoque) podem salvar somente o estoque.")
+        pid=parse_int(self.v_id.get())
+        if not pid: return messagebox.showwarning("Aviso","Selecione um item na lista.")
+        est=parse_int(self.v_estoque.get())
+        if est is None or est<0: return messagebox.showwarning("Aviso","Estoque inválido.")
+        try:
+            update_produto_estoque(pid, est); self._refresh()
+            messagebox.showinfo("OK","Estoque atualizado.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+    def _delete(self):
+        if not self.app.can("produtos.excluir"):
+            return messagebox.showwarning("Permissão","Você não pode excluir produtos.")
+        pid=parse_int(self.v_id.get())
+        if not pid: return messagebox.showwarning("Aviso","Selecione um item na lista.")
+        if not messagebox.askyesno("Confirmar","Excluir este produto?"): return
+        try:
+            delete_produto(pid); self._clear(); self._refresh()
+            messagebox.showinfo("OK","Produto excluído.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+    def _clear(self):
+        self.v_id.set(""); self.v_nome.set(""); self.v_sku.set(""); self.v_preco.set(""); self.v_estoque.set("")
+        self.v_plataforma_form.set("PC"); self.v_categoria_form.set("Jogo Digital"); self.v_ativo.set(True)
+
+# ------------------ TELA: Gerenciar Estoque (CAMPOS ALINHADOS COM BOTÃO VOLTAR) ------------------
+class StockManager(tk.Frame):
+    """
+    Tela para Gerenciamento de Estoque.
+    Exibe a lista de produtos e permite editar o estoque de cada item.
+    """
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+
+        logo(self, "#10131a")
+
+        tk.Label(self, text="Gerenciar Estoque", font=("Segoe UI", 24, "bold"),
+                 bg="#10131a", fg="#fff").pack(pady=(6, 2))
+        self.subtitle = tk.Label(self, text="", font=("Segoe UI", 12),
+                                 bg="#10131a", fg="#cfd8dc")
+        self.subtitle.pack(pady=(0, 4))
+
+        # Barra superior com o botão "Voltar" e filtro na mesma linha
+        topbar = tk.Frame(self, bg="#10131a")
+        topbar.pack(fill="x", padx=10, pady=6)
+        
+        # Filtro de busca na mesma linha do botão Voltar
+        tk.Label(topbar, text="Buscar (nome ou SKU):", bg="#10131a", fg="#fff").pack(side="left", padx=(0, 6))
+        self.v_term = tk.StringVar()
+        tk.Entry(topbar, textvariable=self.v_term, width=30).pack(side="left")
+        ttk.Button(topbar, text="Pesquisar", command=self._refresh).pack(side="left", padx=6)
+        ttk.Button(topbar, text="Limpar", command=lambda: (self.v_term.set(""), self._refresh())).pack(side="left", padx=(0, 20))
+        
+        # Botão Voltar alinhado à direita
+        ttk.Button(topbar, text="Voltar ao Dashboard", width=20,
+                   command=lambda: self.app.show("Dashboard")).pack(side="right")
+
+        # Cabeçalho da tabela
+        header = tk.Frame(self, bg="#10131a")
+        header.pack(fill="x", padx=10, pady=(6, 0))
+        tk.Label(header, text="ID", bg="#10131a", fg="#cfe3ff", width=6, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="Nome do Produto", bg="#10131a", fg="#cfe3ff", width=40, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="SKU", bg="#10131a", fg="#cfe3ff", width=16, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="Estoque", bg="#10131a", fg="#cfe3ff", width=10, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="Ação", bg="#10131a", fg="#cfe3ff", width=12, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+
+        # Frame para o conteúdo rolável
+        outer = tk.Frame(self, bg="#10131a")
+        outer.pack(fill="both", expand=True, padx=10, pady=8)
+        self.canvas = tk.Canvas(outer, bg="#10131a", highlightthickness=0)
+        self.vsb = ttk.Scrollbar(outer, orient="vertical", command=self.canvas.yview)
+        self.hsb = ttk.Scrollbar(outer, orient="horizontal", command=self.canvas.xview)
+        self.list_frame = tk.Frame(self.canvas, bg="#10131a")
+        self.list_frame_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vsb.grid(row=0, column=1, sticky="ns")
+        self.hsb.grid(row=1, column=0, sticky="ew")
+        outer.grid_rowconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+
+        self.list_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self._row_widgets = []
+        self._can_edit_stock = False  # Será determinado se o usuário tem permissão para editar o estoque
+
+    def on_show(self):
+        # SÓ FUNCIONÁRIOS COM PERMISSÃO DE ESTOQUE
+        if not self.app.can("estoque.editar"):
+            messagebox.showwarning("Acesso Negado", "Apenas Estoquista, Gerente de Vendas ou Administrador podem gerenciar estoque.")
+            return self.app.show("Dashboard")
+
+        # Verificar a permissão de edição do estoque para o usuário
+        role = (self.app.current_role or "").strip().lower()
+        cargo = self.app.current_cargo or ""
+        self.subtitle.config(text=f"Usuário: {self.app.current_role or '-'} • {self.app.current_email or '-'}"
+                                   + (f" | Cargo: {cargo}" if role in ("funcionário", "funcionario") and cargo else ""))
+
+        # Verifica a permissão do cargo para editar o estoque
+        self._can_edit_stock = self.app.can("estoque.editar")
+        self._refresh()
+
+    def _on_frame_configure(self, _evt):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, evt):
+        self.canvas.itemconfig(self.list_frame_id, width=evt.width)
+
+    def _refresh(self):
+        for child in self.list_frame.winfo_children():
+            child.destroy()
+        self._row_widgets.clear()
+
+        term = self.v_term.get().strip()
+        try:
+            rows = search_produtos(term, "Todos")
+        except mysql.connector.Error as e:
+            return messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+        for r in rows:
+            pid, nome, plat, cat, sku, preco, est, ativo = r
+            self._add_row(pid, nome, sku, est)
+
+        self.list_frame.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _add_row(self, pid, nome, sku, estoque_atual):
+        row = tk.Frame(self.list_frame, bg="#10131a")
+        row.pack(fill="x", pady=2)
+
+        tk.Label(row, text=str(pid), bg="#10131a", fg="#fff", width=6, anchor="w").pack(side="left", padx=6)
+        tk.Label(row, text=nome, bg="#10131a", fg="#eaf2ff", width=40, anchor="w").pack(side="left", padx=6)
+        tk.Label(row, text=(sku or ""), bg="#10131a", fg="#eaf2ff", width=16, anchor="w").pack(side="left", padx=6)
+
+        var_est = tk.StringVar(value=str(estoque_atual))
+        ent = tk.Entry(row, textvariable=var_est, width=10, state=("normal" if self._can_edit_stock else "readonly"))
+        ent.pack(side="left", padx=6)
+
+        btn = ttk.Button(row, text="Salvar", width=12,
+                         command=lambda p=pid, v=var_est: self._save_one(p, v))
+        if not self._can_edit_stock:
+            btn.state(["disabled"])
+        btn.pack(side="left", padx=6)
+
+        self._row_widgets.append((pid, var_est, ent, btn))
+
+    def _save_one(self, pid, var_est):
+        if not self._can_edit_stock:
+            return messagebox.showwarning("Permissão", "Seu cargo não pode editar estoque.")
+        est = parse_int(var_est.get().strip())
+        if est is None or est < 0:
+            return messagebox.showwarning("Aviso", "Informe um número inteiro de estoque (≥ 0).")
+        try:
+            update_produto_estoque(pid, est)
+            messagebox.showinfo("OK", f"Estoque do ID {pid} atualizado para {est}.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+# ------------------ TELA: Editar Nomes de Produtos (CAMPOS ALINHADOS COM BOTÃO VOLTAR) ------------------
+class EditProductNames(tk.Frame):
+    """
+    Tela para Editar Nomes de Produtos.
+    Exibe a lista de produtos e permite editar o nome de cada item.
+    """
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+
+        logo(self, "#10131a")
+
+        tk.Label(self, text="Editar Nomes de Produtos", font=("Segoe UI", 24, "bold"),
+                 bg="#10131a", fg="#fff").pack(pady=(6, 2))
+        self.subtitle = tk.Label(self, text="", font=("Segoe UI", 12),
+                                 bg="#10131a", fg="#cfd8dc")
+        self.subtitle.pack(pady=(0, 4))
+
+        # Barra superior com o botão "Voltar" e filtro na mesma linha
+        topbar = tk.Frame(self, bg="#10131a")
+        topbar.pack(fill="x", padx=10, pady=6)
+        
+        # Filtro de busca na mesma linha do botão Voltar
+        tk.Label(topbar, text="Buscar (nome ou SKU):", bg="#10131a", fg="#fff").pack(side="left", padx=(0, 6))
+        self.v_term = tk.StringVar()
+        tk.Entry(topbar, textvariable=self.v_term, width=30).pack(side="left")
+        ttk.Button(topbar, text="Pesquisar", command=self._refresh).pack(side="left", padx=6)
+        ttk.Button(topbar, text="Limpar", command=lambda: (self.v_term.set(""), self._refresh())).pack(side="left", padx=(0, 20))
+        
+        # Botão Voltar alinhado à direita
+        ttk.Button(topbar, text="Voltar ao Dashboard", width=20,
+                   command=lambda: self.app.show("Dashboard")).pack(side="right")
+
+        # Cabeçalho da tabela
+        header = tk.Frame(self, bg="#10131a")
+        header.pack(fill="x", padx=10, pady=(6, 0))
+        tk.Label(header, text="ID", bg="#10131a", fg="#cfe3ff", width=6, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="Nome do Produto", bg="#10131a", fg="#cfe3ff", width=40, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="SKU", bg="#10131a", fg="#cfe3ff", width=16, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="Plataforma", bg="#10131a", fg="#cfe3ff", width=12, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+        tk.Label(header, text="Ação", bg="#10131a", fg="#cfe3ff", width=12, anchor="w", font=("Segoe UI", 10, "bold")).pack(side="left", padx=6)
+
+        # Frame para o conteúdo rolável
+        outer = tk.Frame(self, bg="#10131a")
+        outer.pack(fill="both", expand=True, padx=10, pady=8)
+        self.canvas = tk.Canvas(outer, bg="#10131a", highlightthickness=0)
+        self.vsb = ttk.Scrollbar(outer, orient="vertical", command=self.canvas.yview)
+        self.hsb = ttk.Scrollbar(outer, orient="horizontal", command=self.canvas.xview)
+        self.list_frame = tk.Frame(self.canvas, bg="#10131a")
+        self.list_frame_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vsb.grid(row=0, column=1, sticky="ns")
+        self.hsb.grid(row=1, column=0, sticky="ew")
+        outer.grid_rowconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+
+        self.list_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self._row_widgets = []
+        self._can_edit_names = False  # Será determinado se o usuário tem permissão para editar nomes
+
+    def on_show(self):
+        # SÓ FUNCIONÁRIOS COM PERMISSÃO DE EDIÇÃO
+        if not self.app.can("produtos.editar"):
+            messagebox.showwarning("Acesso Negado", "Apenas Gerente de Vendas ou Administrador podem editar nomes de produtos.")
+            return self.app.show("Dashboard")
+
+        # Verificar a permissão de edição de nomes para o usuário
+        role = (self.app.current_role or "").strip().lower()
+        cargo = self.app.current_cargo or ""
+        self.subtitle.config(text=f"Usuário: {self.app.current_role or '-'} • {self.app.current_email or '-'}"
+                                   + (f" | Cargo: {cargo}" if role in ("funcionário", "funcionario") and cargo else ""))
+
+        # Verifica a permissão do cargo para editar nomes de produtos
+        self._can_edit_names = self.app.can("produtos.editar")
+        self._refresh()
+
+    def _on_frame_configure(self, _evt):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, evt):
+        self.canvas.itemconfig(self.list_frame_id, width=evt.width)
+
+    def _refresh(self):
+        for child in self.list_frame.winfo_children():
+            child.destroy()
+        self._row_widgets.clear()
+
+        term = self.v_term.get().strip()
+        try:
+            rows = search_produtos(term, "Todos")
+        except mysql.connector.Error as e:
+            return messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+        for r in rows:
+            pid, nome, plat, cat, sku, preco, est, ativo = r
+            self._add_row(pid, nome, sku, plat)
+
+        self.list_frame.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _add_row(self, pid, nome, sku, plataforma):
+        row = tk.Frame(self.list_frame, bg="#10131a")
+        row.pack(fill="x", pady=2)
+
+        tk.Label(row, text=str(pid), bg="#10131a", fg="#fff", width=6, anchor="w").pack(side="left", padx=6)
+        
+        var_nome = tk.StringVar(value=nome)
+        ent_nome = tk.Entry(row, textvariable=var_nome, width=40, state=("normal" if self._can_edit_names else "readonly"))
+        ent_nome.pack(side="left", padx=6)
+
+        tk.Label(row, text=(sku or ""), bg="#10131a", fg="#eaf2ff", width=16, anchor="w").pack(side="left", padx=6)
+        tk.Label(row, text=plataforma, bg="#10131a", fg="#eaf2ff", width=12, anchor="w").pack(side="left", padx=6)
+
+        btn = ttk.Button(row, text="Salvar", width=12,
+                         command=lambda p=pid, v=var_nome: self._save_one(p, v))
+        if not self._can_edit_names:
+            btn.state(["disabled"])
+        btn.pack(side="left", padx=6)
+
+        self._row_widgets.append((pid, var_nome, ent_nome, btn))
+
+    def _save_one(self, pid, var_nome):
+        if not self._can_edit_names:
+            return messagebox.showwarning("Permissão", "Seu cargo não pode editar nomes de produtos.")
+        
+        novo_nome = var_nome.get().strip()
+        if not novo_nome:
+            return messagebox.showwarning("Aviso", "O nome do produto não pode estar vazio.")
+        
+        try:
+            update_produto_nome(pid, novo_nome)
+            messagebox.showinfo("OK", f"Nome do produto ID {pid} atualizado para: {novo_nome}")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Banco de Dados", f"Erro: {e}")
+
+# ------------------ TELA: Registro de Vendas ------------------
+class RegistroVendas(tk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+        
+        logo(self, "#10131a")
+        tk.Label(self, text="Registro de Vendas", font=("Segoe UI", 24, "bold"), 
+                bg="#10131a", fg="#fff").pack(pady=(6, 2))
+        
+        self.subtitle = tk.Label(self, text="", font=("Segoe UI", 12),
+                                bg="#10131a", fg="#cfd8dc")
+        self.subtitle.pack(pady=(0, 10))
+
+        # Barra superior
+        topbar = tk.Frame(self, bg="#10131a")
+        topbar.pack(fill="x", padx=8, pady=4)
+        ttk.Button(topbar, text="Voltar ao Dashboard", width=20,
+                  command=lambda: self.app.show("Dashboard")).pack(side="right")
+
+        # Formulário de venda - MELHOR ALINHADO
+        form_frame = tk.Frame(self, bg="#10131a")
+        form_frame.pack(pady=15, padx=20)
+
+        # Produto
+        tk.Label(form_frame, text="Selecionar Produto:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w", pady=8, padx=5)
+        
+        self.v_produto = tk.StringVar()
+        self.cb_produto = ttk.Combobox(form_frame, textvariable=self.v_produto, 
+                                      width=42, state="readonly")
+        self.cb_produto.grid(row=0, column=1, padx=10, pady=8, sticky="ew")
+
+        # Quantidade
+        tk.Label(form_frame, text="Quantidade:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=1, column=0, sticky="w", pady=8, padx=5)
+        
+        self.v_quantidade = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.v_quantidade, width=44).grid(row=1, column=1, padx=10, pady=8, sticky="w")
+
+        # Preço unitário (automático)
+        tk.Label(form_frame, text="Preço Unitário:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=2, column=0, sticky="w", pady=8, padx=5)
+        
+        self.v_preco_unitario = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.v_preco_unitario, width=44, state="readonly").grid(row=2, column=1, padx=10, pady=8, sticky="w")
+
+        # Total (calculado automaticamente)
+        tk.Label(form_frame, text="Total da Venda:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky="w", pady=8, padx=5)
+        
+        self.v_total = tk.StringVar(value="R$ 0,00")
+        tk.Entry(form_frame, textvariable=self.v_total, width=44, state="readonly",
+                font=("Segoe UI", 10, "bold"), fg="#27ae60").grid(row=3, column=1, padx=10, pady=8, sticky="w")
+
+        # Configurar colunas para melhor alinhamento
+        form_frame.columnconfigure(1, weight=1)
+
+        # Botões - REMOVIDO O BOTÃO "CALCULAR TOTAL"
+        btn_frame = tk.Frame(self, bg="#10131a")
+        btn_frame.pack(pady=20)
+        
+        ttk.Button(btn_frame, text="Registrar Venda", width=18,
+                  command=self._registrar_venda).grid(row=0, column=0, padx=8)
+        ttk.Button(btn_frame, text="Limpar Campos", width=18,
+                  command=self._limpar_campos).grid(row=0, column=1, padx=8)
+
+        # Carregar produtos
+        self._carregar_produtos()
+        self.cb_produto.bind('<<ComboboxSelected>>', self._on_produto_selecionado)
+        self.v_quantidade.trace('w', self._calcular_total)
+
+    def on_show(self):
+        # SÓ FUNCIONÁRIOS COM PERMISSÃO DE VENDAS
+        if not self.app.can("vendas.registrar"):
+            messagebox.showwarning("Acesso Negado", "Apenas Vendedor, Gerente de Vendas ou Administrador podem registrar vendas.")
+            return self.app.show("Dashboard")
+        
+        self.subtitle.config(text=f"Usuário: {self.app.current_role or '-'} • {self.app.current_email or '-'}")
+        self._carregar_produtos()
+        self._limpar_campos()
+
+    def _carregar_produtos(self):
+        try:
+            produtos = search_produtos("", "Todos")
+            nomes_produtos = [f"{p[0]} - {p[1]} (R$ {p[5]:.2f})" for p in produtos]
+            self.cb_produto['values'] = nomes_produtos
+        except mysql.connector.Error as e:
+            messagebox.showerror("Erro", f"Erro ao carregar produtos: {e}")
+
+    def _on_produto_selecionado(self, event):
+        selecionado = self.v_produto.get()
+        if selecionado:
+            id_produto = selecionado.split(" - ")[0]
+            try:
+                produtos = search_produtos("", "Todos")
+                for p in produtos:
+                    if str(p[0]) == id_produto:
+                        self.v_preco_unitario.set(f"R$ {p[5]:.2f}")
+                        self._calcular_total()
+                        break
+            except:
+                pass
+
+    def _calcular_total(self, *args):
+        try:
+            quantidade = int(self.v_quantidade.get() or 0)
+            preco_texto = self.v_preco_unitario.get().replace("R$", "").strip()
+            preco_unitario = float(preco_texto.replace(",", ".")) if preco_texto else 0
+            total = quantidade * preco_unitario
+            self.v_total.set(f"R$ {total:.2f}")
+        except:
+            self.v_total.set("R$ 0,00")
+
+    def _registrar_venda(self):
+        if not self.v_produto.get():
+            return messagebox.showwarning("Aviso", "Selecione um produto.")
+        
+        try:
+            quantidade = int(self.v_quantidade.get() or 0)
+            if quantidade <= 0:
+                return messagebox.showwarning("Aviso", "Informe uma quantidade válida.")
+            
+            id_produto = self.v_produto.get().split(" - ")[0]
+            total = float(self.v_total.get().replace("R$", "").replace(",", ".").strip())
+            
+            # Usar o ID do usuário logado
+            if not self.app.current_user_id:
+                return messagebox.showerror("Erro", "ID do usuário não encontrado.")
+            
+            registrar_venda(id_produto, quantidade, total, self.app.current_user_id)
+            messagebox.showinfo("Sucesso", f"Venda registrada!\nTotal: R$ {total:.2f}")
+            self._limpar_campos()
+            
+        except ValueError:
+            messagebox.showerror("Erro", "Quantidade inválida.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Erro", f"Erro ao registrar venda: {e}")
+
+    def _limpar_campos(self):
+        self.v_produto.set("")
+        self.v_quantidade.set("")
+        self.v_preco_unitario.set("")
+        self.v_total.set("R$ 0,00")
+
+# ------------------ TELA: Relatório de Vendas (CAMPOS ALINHADOS COM BOTÃO VOLTAR) ------------------
+class RelatorioVendas(tk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+        
+        logo(self, "#10131a")
+        tk.Label(self, text="Relatório de Vendas", font=("Segoe UI", 22, "bold"),  # Fonte menor
+                bg="#10131a", fg="#fff").pack(pady=(2, 0))  # Reduzido pady
+        
+        self.subtitle = tk.Label(self, text="", font=("Segoe UI", 10),  # Fonte menor
+                                bg="#10131a", fg="#cfd8dc")
+        self.subtitle.pack(pady=(0, 2))  # Reduzido bastante
+
+        # Barra superior com filtros e botão Voltar na mesma linha - MAIS COMPACTA
+        topbar = tk.Frame(self, bg="#10131a")
+        topbar.pack(fill="x", padx=10, pady=3)  # Reduzido pady
+        
+        # Filtros de período na mesma linha do botão Voltar
+        tk.Label(topbar, text="Início:", bg="#10131a", fg="#fff", font=("Segoe UI", 9)).grid(row=0, column=0, padx=2)
+        self.v_data_inicio = tk.StringVar()
+        tk.Entry(topbar, textvariable=self.v_data_inicio, width=10, font=("Segoe UI", 9)).grid(row=0, column=1, padx=2)
+        
+        tk.Label(topbar, text="Fim:", bg="#10131a", fg="#fff", font=("Segoe UI", 9)).grid(row=0, column=2, padx=2)
+        self.v_data_fim = tk.StringVar()
+        tk.Entry(topbar, textvariable=self.v_data_fim, width=10, font=("Segoe UI", 9)).grid(row=0, column=3, padx=2)
+        
+        ttk.Button(topbar, text="Gerar", width=8,  # Mais compacto
+                  command=self._gerar_relatorio).grid(row=0, column=4, padx=3)
+        ttk.Button(topbar, text="Hoje", width=6,
+                  command=lambda: self._definir_periodo("hoje")).grid(row=0, column=5, padx=1)
+        ttk.Button(topbar, text="Mês", width=6,  # Mais compacto
+                  command=lambda: self._definir_periodo("mes")).grid(row=0, column=6, padx=1)
+        
+        # Botão Voltar alinhado à direita
+        ttk.Button(topbar, text="Voltar", width=12,  # Mais compacto
+                  command=lambda: self.app.show("Dashboard")).grid(row=0, column=7, padx=(10, 0))
+
+        # Cards de resumo - MAIS COMPACTOS
+        self.cards_frame = tk.Frame(self, bg="#10131a")
+        self.cards_frame.pack(pady=4, padx=10, fill="x")  # Reduzido pady e padx
+
+        # Área de resultados - MAIS ESPAÇO PARA TABELA
+        area = tk.Frame(self, bg="#10131a")
+        area.pack(padx=10, pady=2, fill="both", expand=True)  # Reduzido pady
+
+        # Treeview para mostrar vendas - MAIS ALTA
+        columns = ("id", "produto", "quantidade", "total", "data")
+        self.tree = ttk.Treeview(area, columns=columns, show="headings", height=18)  # Aumentada altura para 18
+        
+        self.tree.heading("id", text="ID")
+        self.tree.heading("produto", text="Produto")
+        self.tree.heading("quantidade", text="Qtd")
+        self.tree.heading("total", text="Total (R$)")
+        self.tree.heading("data", text="Data")
+        
+        self.tree.column("id", width=50, anchor="center")  # Mais estreito
+        self.tree.column("produto", width=280)  # Mais largo para produtos
+        self.tree.column("quantidade", width=60, anchor="center")  # Mais estreito
+        self.tree.column("total", width=100, anchor="e")  # Mais estreito
+        self.tree.column("data", width=90, anchor="center")  # Mais estreito
+
+        vsb = ttk.Scrollbar(area, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(area, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        
+        area.grid_rowconfigure(0, weight=1)
+        area.grid_columnconfigure(0, weight=1)
+
+        # Definir datas padrão (este mês)
+        self._definir_periodo("mes")
+
+    def on_show(self):
+        # SÓ FUNCIONÁRIOS COM PERMISSÃO DE RELATÓRIOS
+        if not self.app.can("vendas.relatorios"):
+            messagebox.showwarning("Acesso Negado", "Apenas Gerente de Vendas ou Administrador podem visualizar relatórios de vendas.")
+            return self.app.show("Dashboard")
+        
+        self.subtitle.config(text=f"Usuário: {self.app.current_role or '-'} • {self.app.current_email or '-'}")
+        self._gerar_relatorio()
+
+    def _definir_periodo(self, periodo):
+        hoje = datetime.now()
+        
+        if periodo == "hoje":
+            self.v_data_inicio.set(hoje.strftime("%Y-%m-%d"))
+            self.v_data_fim.set(hoje.strftime("%Y-%m-%d"))
+        elif periodo == "mes":
+            primeiro_dia = hoje.replace(day=1)
+            self.v_data_inicio.set(primeiro_dia.strftime("%Y-%m-%d"))
+            self.v_data_fim.set(hoje.strftime("%Y-%m-%d"))
+
+    def _gerar_relatorio(self):
+        data_inicio = self.v_data_inicio.get()
+        data_fim = self.v_data_fim.get()
+        
+        if not data_inicio or not data_fim:
+            messagebox.showwarning("Aviso", "Informe as datas de início e fim.")
+            return
+
+        try:
+            # Limpar treeview
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            # Buscar vendas
+            vendas = get_vendas_por_periodo(data_inicio, data_fim)
+            total_vendas, qtd_vendas = get_total_vendas_periodo(data_inicio, data_fim)
+            produto_mais_vendido = get_produto_mais_vendido(data_inicio, data_fim)
+
+            # Preencher treeview
+            for venda in vendas:
+                self.tree.insert("", "end", values=venda)
+
+            # Atualizar cards de resumo
+            self._atualizar_cards(total_vendas or 0, qtd_vendas or 0, produto_mais_vendido)
+
+        except mysql.connector.Error as e:
+            messagebox.showerror("Erro", f"Erro ao gerar relatório: {e}")
+
+    def _atualizar_cards(self, total_vendas, qtd_vendas, produto_mais_vendido):
+        # Limpar cards anteriores
+        for widget in self.cards_frame.winfo_children():
+            widget.destroy()
+
+        # Card Total de Vendas - MAIS COMPACTO
+        card1 = tk.Frame(self.cards_frame, bg="#27ae60", relief="raised", bd=1)
+        card1.pack(side="left", padx=6, fill="both", expand=True)
+        tk.Label(card1, text="Total", bg="#27ae60", fg="white",  # Texto mais curto
+                font=("Segoe UI", 9, "bold")).pack(pady=3)
+        tk.Label(card1, text=f"R$ {total_vendas:.2f}", bg="#27ae60", 
+                fg="white", font=("Segoe UI", 11, "bold")).pack(pady=2)
+
+        # Card Quantidade de Vendas - MAIS COMPACTO
+        card2 = tk.Frame(self.cards_frame, bg="#3498db", relief="raised", bd=1)
+        card2.pack(side="left", padx=6, fill="both", expand=True)
+        tk.Label(card2, text="Qtd Vendas", bg="#3498db", fg="white",  # Texto mais curto
+                font=("Segoe UI", 9, "bold")).pack(pady=3)
+        tk.Label(card2, text=str(qtd_vendas), bg="#3498db", 
+                fg="white", font=("Segoe UI", 11, "bold")).pack(pady=2)
+
+        # Card Produto Mais Vendido - MAIS COMPACTO
+        card3 = tk.Frame(self.cards_frame, bg="#e67e22", relief="raised", bd=1)
+        card3.pack(side="left", padx=6, fill="both", expand=True)
+        tk.Label(card3, text="Mais Vendido", bg="#e67e22", fg="white",  # Texto mais curto
+                font=("Segoe UI", 9, "bold")).pack(pady=3)
+        produto_nome = produto_mais_vendido[0] if produto_mais_vendido else "Nenhum"
+        # Truncar nome muito longo
+        if len(produto_nome) > 15:
+            produto_nome = produto_nome[:15] + "..."
+        tk.Label(card3, text=produto_nome, bg="#e67e22", 
+                fg="white", font=("Segoe UI", 9, "bold")).pack(pady=2)
+
+# ------------------ TELA: Compras (ATUALIZADA COM FORMA DE PAGAMENTO CORRIGIDA) ------------------
+class Compras(tk.Frame):
+    def __init__(self, parent, app):
+        super().__init__(parent, bg="#10131a")
+        self.app = app
+        
+        logo(self, "#10131a")
+        tk.Label(self, text="Comprar Jogos", font=("Segoe UI", 24, "bold"), 
+                bg="#10131a", fg="#fff").pack(pady=(6, 2))
+        
+        # Barra superior - CLIENTE E VOLTAR JUNTOS
+        topbar = tk.Frame(self, bg="#10131a")
+        topbar.pack(fill="x", padx=10, pady=6)
+        
+        # Cliente alinhado à esquerda
+        self.subtitle = tk.Label(topbar, text="", font=("Segoe UI", 10),
+                                bg="#10131a", fg="#cfd8dc")
+        self.subtitle.pack(side="left")
+        
+        # Botão Voltar alinhado à direita
+        ttk.Button(topbar, text="Voltar ao Dashboard", width=20,
+                  command=lambda: app.show("Dashboard")).pack(side="right")
+
+        # Formulário de compra - MAIS COMPACTO
+        form_frame = tk.Frame(self, bg="#10131a")
+        form_frame.pack(pady=10, padx=20)
+
+        # Produto
+        tk.Label(form_frame, text="Selecionar Jogo:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w", pady=6, padx=5)
+        
+        self.v_produto = tk.StringVar()
+        self.cb_produto = ttk.Combobox(form_frame, textvariable=self.v_produto, 
+                                      width=42, state="readonly")
+        self.cb_produto.grid(row=0, column=1, padx=10, pady=6, sticky="ew")
+
+        # Quantidade
+        tk.Label(form_frame, text="Quantidade:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=1, column=0, sticky="w", pady=6, padx=5)
+        
+        self.v_quantidade = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.v_quantidade, width=44).grid(row=1, column=1, padx=10, pady=6, sticky="w")
+
+        # Preço unitário (automático)
+        tk.Label(form_frame, text="Preço Unitário:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=2, column=0, sticky="w", pady=6, padx=5)
+        
+        self.v_preco_unitario = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.v_preco_unitario, width=44, state="readonly").grid(row=2, column=1, padx=10, pady=6, sticky="w")
+
+        # Forma de Pagamento (NOVO CAMPO)
+        tk.Label(form_frame, text="Forma de Pagamento:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10)).grid(row=3, column=0, sticky="w", pady=6, padx=5)
+        
+        self.v_forma_pagamento = tk.StringVar()
+        self.cb_pagamento = ttk.Combobox(form_frame, textvariable=self.v_forma_pagamento,
+                                        values=["Pix", "Cartão Crédito", "Cartão Débito", "Boleto"],
+                                        state="readonly", width=41)
+        self.cb_pagamento.grid(row=3, column=1, padx=10, pady=6, sticky="w")
+
+        # Total (calculado automaticamente)
+        tk.Label(form_frame, text="Total da Compra:", bg="#10131a", fg="#fff",
+                font=("Segoe UI", 10, "bold")).grid(row=4, column=0, sticky="w", pady=8, padx=5)
+        
+        self.v_total = tk.StringVar(value="R$ 0,00")
+        tk.Entry(form_frame, textvariable=self.v_total, width=44, state="readonly",
+                font=("Segoe UI", 10, "bold"), fg="#27ae60").grid(row=4, column=1, padx=10, pady=8, sticky="w")
+
+        # Configurar colunas para melhor alinhamento
+        form_frame.columnconfigure(1, weight=1)
+
+        # Botões - COMPRAR E LIMPAR CAMPOS
+        btn_frame = tk.Frame(self, bg="#10131a")
+        btn_frame.pack(pady=15)
+        
+        ttk.Button(btn_frame, text="Comprar", width=18,
+                  command=self._realizar_compra).grid(row=0, column=0, padx=8)
+        ttk.Button(btn_frame, text="Limpar Campos", width=18,
+                  command=self._limpar_campos).grid(row=0, column=1, padx=8)
+
+        # Carregar produtos
+        self._carregar_produtos()
+        self.cb_produto.bind('<<ComboboxSelected>>', self._on_produto_selecionado)
+        self.v_quantidade.trace('w', self._calcular_total)
+
+    def on_show(self):
+        # APENAS CLIENTES PODEM COMPRAR
+        if self.app.current_role != "Cliente/Usuário":
+            messagebox.showwarning("Acesso Negado", "Apenas clientes podem realizar compras.")
+            return self.app.show("Dashboard")
+        
+        self.subtitle.config(text=f"Cliente: {self.app.current_email or '-'}")
+        self._carregar_produtos()
+        self._limpar_campos()
+
+    def _carregar_produtos(self):
+        try:
+            produtos = search_produtos("", "Todos")
+            # Mostrar apenas produtos ativos com estoque
+            produtos_ativos = [f"{p[0]} - {p[1]} (R$ {p[5]:.2f})" for p in produtos if p[7] and p[6] > 0]
+            self.cb_produto['values'] = produtos_ativos
+        except mysql.connector.Error as e:
+            messagebox.showerror("Erro", f"Erro ao carregar produtos: {e}")
+
+    def _on_produto_selecionado(self, event):
+        selecionado = self.v_produto.get()
+        if selecionado:
+            id_produto = selecionado.split(" - ")[0]
+            try:
+                produtos = search_produtos("", "Todos")
+                for p in produtos:
+                    if str(p[0]) == id_produto:
+                        self.v_preco_unitario.set(f"R$ {p[5]:.2f}")
+                        self._calcular_total()
+                        break
+            except:
+                pass
+
+    def _calcular_total(self, *args):
+        try:
+            quantidade = int(self.v_quantidade.get() or 0)
+            preco_texto = self.v_preco_unitario.get().replace("R$", "").strip()
+            preco_unitario = float(preco_texto.replace(",", ".")) if preco_texto else 0
+            total = quantidade * preco_unitario
+            self.v_total.set(f"R$ {total:.2f}")
+        except:
+            self.v_total.set("R$ 0,00")
+
+    def _realizar_compra(self):
+        if not self.v_produto.get():
+            return messagebox.showwarning("Aviso", "Selecione um jogo.")
+        
+        if not self.v_forma_pagamento.get():
+            return messagebox.showwarning("Aviso", "Selecione uma forma de pagamento.")
+        
+        try:
+            quantidade = int(self.v_quantidade.get() or 0)
+            if quantidade <= 0:
+                return messagebox.showwarning("Aviso", "Informe uma quantidade válida.")
+            
+            produto_selecionado = self.v_produto.get()
+            id_produto = produto_selecionado.split(" - ")[0]
+            nome_produto = " - ".join(produto_selecionado.split(" - ")[1:])  # Pega o nome sem o ID
+            total = float(self.v_total.get().replace("R$", "").replace(",", ".").strip())
+            
+            # Mapear forma de pagamento CORRETAMENTE
+            forma_pagamento_selecionada = self.v_forma_pagamento.get()
+            pagamento_map = {
+                "Pix": "pix",
+                "Cartão Crédito": "cartao_credito",
+                "Cartão Débito": "cartao_debito",
+                "Boleto": "boleto"
+            }
+            forma_pagamento_db = pagamento_map.get(forma_pagamento_selecionada, "pix")
+            
+            # Verificar se o cliente está logado
+            if not self.app.current_user_id:
+                return messagebox.showerror("Erro", "ID do cliente não encontrado.")
+            
+            # Registrar a compra COM O NOME DO PRODUTO E FORMA DE PAGAMENTO
+            numero_pedido = registrar_compra(self.app.current_user_id, id_produto, nome_produto, quantidade, total, forma_pagamento_db)
+            
+            messagebox.showinfo("Sucesso!", 
+                              f"Compra realizada com sucesso!\n\n"
+                              f"Produto: {nome_produto}\n"
+                              f"Quantidade: {quantidade}\n"
+                              f"Forma de Pagamento: {forma_pagamento_selecionada}\n"
+                              f"Número do Pedido: {numero_pedido}\n"
+                              f"Total: R$ {total:.2f}\n\n"
+                              f"Obrigado pela compra!")
+            
+            self._limpar_campos()
+            
+        except ValueError:
+            messagebox.showerror("Erro", "Quantidade inválida.")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Erro", f"Erro ao realizar compra: {e}")
+
+    def _limpar_campos(self):
+        self.v_produto.set("")
+        self.v_quantidade.set("")
+        self.v_preco_unitario.set("")
+        self.v_forma_pagamento.set("")
+        self.v_total.set("R$ 0,00")
+
+# ------------------ main ------------------
+if __name__ == "__main__":
+    App().mainloop()
